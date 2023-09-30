@@ -1,0 +1,427 @@
+C51 COMPILER V8.18   WPC                                                                   12/22/2016 21:24:29 PAGE 1   
+
+
+C51 COMPILER V8.18, COMPILATION OF MODULE WPC
+OBJECT MODULE PLACED IN WPC.OBJ
+COMPILER INVOKED BY: C:\Keil\C51\BIN\C51.EXE WPC.c BROWSE DEBUG OBJECTEXTEND
+
+line level    source
+
+   1          #include <reg51.h> 
+   2          #include "lcd.h"        
+   3          #include "delay.h" 
+   4          //----------------------------------- definition ---------------------------------------------------------
+             -------
+   5          #define ON 0
+   6          #define OFF 1
+   7          #define HIGH 0
+   8          #define LOW 1
+   9          
+  10          #define _pumppausetime 15  // pump pause time when well water is low (minutes).
+  11          #define _pumppausedelay 240     // pump pause monitoring delay approximate time (seconds, times 2).
+  12          
+  13          volatile _autoflag;
+  14          volatile _lowbuzzflag;
+  15          volatile _stopdispflag;
+  16          volatile _pumponflag;
+  17          volatile _highsenseflag;
+  18          volatile _autoidledispflag;
+  19          volatile _manualidledispflag;
+  20          volatile _dispflagfull;                           
+  21          volatile _dispflagokay;
+  22          volatile _dispflagerr;
+  23          volatile _dispflaglow;
+  24          int count;
+  25          
+  26          //----------------------------------- Inputs  (Port 1) ---------------------------------------------------
+             --------
+  27          sbit _startswitch = P1^0;
+  28          sbit _stopswitch = P1^1;
+  29          sbit _asswitch = P1^2;
+  30          sbit _flowsensor = P1^3;
+  31          sbit _highsensor = P1^4;
+  32          sbit _lowsensor = P1^5;
+  33          
+  34          //----------------------------------- Outputs (Port 3) ---------------------------------------------------
+             --------
+  35          sbit _relay = P2^0;
+  36          sbit _buzzer = P2^1;
+  37          
+  38          //=================================== Initialization ==========================================
+  39          
+  40          void init_peripheral()
+  41          {       
+  42   1              P0 = 0x00;
+  43   1              P1 = 0xFF; 
+  44   1              P2 = 0xFF;
+  45   1      
+  46   1              count = 0;
+  47   1              _autoflag = HIGH;
+  48   1              _lowbuzzflag = HIGH;
+  49   1              _stopdispflag = HIGH;
+  50   1              _autoidledispflag = HIGH;
+  51   1              _manualidledispflag = HIGH;
+  52   1              _highsenseflag = HIGH;
+C51 COMPILER V8.18   WPC                                                                   12/22/2016 21:24:29 PAGE 2   
+
+  53   1              _pumponflag = HIGH;
+  54   1              _dispflagfull = HIGH;
+  55   1              _dispflagokay = HIGH;
+  56   1              _dispflagerr = HIGH;
+  57   1              _dispflaglow = HIGH;
+  58   1              
+  59   1      //--------------------------------------------------------------------------------------------
+  60   1              LCD_Init();
+  61   1              LCD_DisplayString("    JABALTech   ");
+  62   1              LCD_GoToLineTwo();
+  63   1              LCD_DisplayString(" Pump Controller");
+  64   1              delay_sec(1);
+  65   1              LCD_Clear();
+  66   1              LCD_DisplayString(" Powering on ");
+  67   1              delay_ms(250);
+  68   1              LCD_GoToXY(2, 14);
+  69   1              LCD_DataWrite('.');
+  70   1              delay_ms(250);
+  71   1              LCD_GoToXY(2, 15);
+  72   1              LCD_DataWrite('.');
+  73   1              delay_ms(250);
+  74   1              LCD_GoToXY(2, 16);
+  75   1              LCD_DataWrite('.');
+  76   1      
+  77   1              _buzzer = ON;
+  78   1              delay_ms(100);
+  79   1              _buzzer = OFF;
+  80   1      
+  81   1              LCD_Clear();
+  82   1              LCD_GoToLineOne();
+  83   1              LCD_DisplayString(" Automatic Start");
+  84   1              LCD_GoToLineTwo();
+  85   1              if (_asswitch == LOW)
+  86   1                      {
+  87   2                              LCD_DisplayString("    disabled    ");
+  88   2                      }
+  89   1              else
+  90   1                      {
+  91   2                              LCD_DisplayString("     enabled    ");
+  92   2                      }
+  93   1              delay_sec(1);
+  94   1              LCD_Clear();
+  95   1      }
+  96          
+  97          //=========================================================================================
+  98          
+  99          void waterleveldisp()
+ 100                                  {       
+ 101   1                                      _autoidledispflag = HIGH;
+ 102   1                                      _manualidledispflag = HIGH;     
+ 103   1                                      LCD_GoToLineOne();
+ 104   1      
+ 105   1                                      if (_highsensor == HIGH && _lowsensor == HIGH && _dispflagfull == HIGH)
+ 106   1                                              { // water level is on top sensor
+ 107   2                                                      LCD_DisplayString("Tank Water: Full");
+ 108   2                                                      _dispflagfull = LOW;
+ 109   2                                                      _dispflaglow = HIGH;
+ 110   2                                                      _dispflagokay = HIGH;
+ 111   2                                                      _dispflagerr = HIGH;
+ 112   2                                              }
+ 113   1      
+ 114   1                                      if (_highsensor == LOW && _lowsensor == HIGH && _dispflagokay == HIGH)
+C51 COMPILER V8.18   WPC                                                                   12/22/2016 21:24:29 PAGE 3   
+
+ 115   1                                              { // water level is below high sensor
+ 116   2                                                      LCD_DisplayString("Tank Water: Okay");
+ 117   2                                                      _dispflagokay = LOW;
+ 118   2                                                      _dispflaglow = HIGH;
+ 119   2                                                      _dispflagfull = HIGH;
+ 120   2                                                      _dispflagerr = HIGH;
+ 121   2                                              }
+ 122   1      
+ 123   1                                      if (_highsensor == HIGH && _lowsensor == LOW && _dispflagerr == HIGH)
+ 124   1                                              { // sensor malfunction
+ 125   2                                                      LCD_DisplayString("Tank Water: Err.");
+ 126   2                                                      _dispflagerr = LOW;
+ 127   2                                                      _dispflaglow = HIGH;
+ 128   2                                                      _dispflagfull = HIGH;
+ 129   2                                                      _dispflagokay = HIGH;
+ 130   2                                              }
+ 131   1      
+ 132   1                                      if (_highsensor == LOW && _lowsensor == LOW && _dispflaglow == HIGH)
+ 133   1                                              { // water level is below low sensor
+ 134   2                                                      LCD_DisplayString("Tank Water: Low!");
+ 135   2                                                      _dispflaglow = LOW;
+ 136   2                                                      _dispflagokay = HIGH;
+ 137   2                                                      _dispflagfull = HIGH;
+ 138   2                                                      _dispflagerr = HIGH;
+ 139   2                                              }
+ 140   1      }
+ 141          
+ 142          void status_manualidle()
+ 143                          {
+ 144   1                              waterleveldisp();
+ 145   1      
+ 146   1                              if (_manualidledispflag == HIGH)
+ 147   1                              {
+ 148   2                                      LCD_GoToLineTwo();
+ 149   2      
+ 150   2                                      if (_highsensor == HIGH)
+ 151   2                                      {
+ 152   3                                              if (_pumponflag == HIGH || _stopdispflag == LOW)
+ 153   3                                                      {
+ 154   4                                                              LCD_DisplayString("----------------");
+ 155   4                                                      }
+ 156   3                                      }
+ 157   2      
+ 158   2                                      else if (_highsensor != HIGH && _pumponflag == HIGH)
+ 159   2                                      {                                                                                               
+ 160   3                                              LCD_DisplayString("  Press START   ");
+ 161   3                                      }
+ 162   2                                      _manualidledispflag = LOW;
+ 163   2                                      _autoidledispflag = HIGH;
+ 164   2                              }
+ 165   1                      }
+ 166          
+ 167          void status_autoidle()
+ 168                          {
+ 169   1                              waterleveldisp();
+ 170   1                              if (_autoidledispflag == HIGH)
+ 171   1                                      {
+ 172   2                                              if (_pumponflag == HIGH)
+ 173   2                                              {
+ 174   3                                                      LCD_GoToLineTwo();
+ 175   3                                                      LCD_DisplayString("  Monitoring... ");
+ 176   3                                              }
+C51 COMPILER V8.18   WPC                                                                   12/22/2016 21:24:29 PAGE 4   
+
+ 177   2                              _autoidledispflag = LOW;
+ 178   2                              _manualidledispflag = HIGH;}
+ 179   1                      }
+ 180          
+ 181          void status_startpump()
+ 182                  {
+ 183   1                      waterleveldisp();                               // start water pump when START button is pressed
+ 184   1                      _relay = ON;                            
+ 185   1                      _pumponflag = LOW;
+ 186   1                      _stopdispflag = HIGH;
+ 187   1                      _autoidledispflag = HIGH;
+ 188   1                      _manualidledispflag = HIGH;
+ 189   1                      _highsenseflag = HIGH;
+ 190   1                      _lowbuzzflag = LOW;
+ 191   1                      LCD_GoToLineTwo();
+ 192   1                      LCD_DisplayString("  Pump Running  ");
+ 193   1              }
+ 194          
+ 195          void status_stoppump()
+ 196                  {
+ 197   1                      waterleveldisp();
+ 198   1                      _relay = OFF;                           // stop water pump when START/STOP button is pressed
+ 199   1                      _pumponflag = HIGH;
+ 200   1                      _lowbuzzflag = HIGH;
+ 201   1                      _autoidledispflag = HIGH;
+ 202   1                      _manualidledispflag = HIGH;
+ 203   1                      count = 0;
+ 204   1                              if (_stopdispflag == HIGH)
+ 205   1                              {
+ 206   2                                      LCD_GoToLineTwo();
+ 207   2                                      LCD_DisplayString("  Pump Stopped  ");
+ 208   2                                      delay_sec(1);
+ 209   2                                      _stopdispflag = LOW;
+ 210   2                              }
+ 211   1              }
+ 212          
+ 213          void status_pausepump()
+ 214                  {
+ 215   1                      _relay = OFF;
+ 216   1                      _pumponflag = HIGH;
+ 217   1                      count = 0;
+ 218   1                      LCD_GoToLineOne();
+ 219   1                      LCD_DisplayString("Water Flow Error");
+ 220   1                      LCD_GoToLineTwo();
+ 221   1                      LCD_DisplayString("  Pump paused!  ");
+ 222   1                      _autoidledispflag = HIGH;
+ 223   1                      _manualidledispflag = HIGH;
+ 224   1                      _dispflagfull = HIGH;
+ 225   1                      _dispflaglow = HIGH;
+ 226   1                      _dispflagokay = HIGH;
+ 227   1                      _dispflagerr = HIGH;
+ 228   1      
+ 229   1                      if (_asswitch == HIGH)
+ 230   1                      {
+ 231   2                              delay_min(_pumppausetime);
+ 232   2                              status_startpump();
+ 233   2                      }
+ 234   1      
+ 235   1                      else
+ 236   1                      {
+ 237   2                              while(_startswitch == LOW && _stopswitch == LOW)
+ 238   2                              {
+C51 COMPILER V8.18   WPC                                                                   12/22/2016 21:24:29 PAGE 5   
+
+ 239   3                                      _buzzer = ON;
+ 240   3                                      delay_ms(500);
+ 241   3                                      _buzzer = OFF;
+ 242   3                                      delay_sec(1);
+ 243   3                              }
+ 244   2                              if (_startswitch == HIGH)
+ 245   2                                      {
+ 246   3                                              status_startpump();
+ 247   3                                      }
+ 248   2      
+ 249   2                              if (_stopswitch == HIGH)
+ 250   2                                      {
+ 251   3                                              status_stoppump();
+ 252   3                                      }
+ 253   2                                              
+ 254   2                      }
+ 255   1              }
+ 256          
+ 257          
+ 258          //========================================================================================================
+             -=================
+ 259          void main() 
+ 260          {
+ 261   1              init_peripheral();
+ 262   1              
+ 263   1              while(1){
+ 264   2                              
+ 265   2                              while (_asswitch == LOW)                                                        // Autostart is disabled
+ 266   2                              {
+ 267   3                                      
+ 268   3                                      status_manualidle();
+ 269   3                                      
+ 270   3                                      if (_pumponflag == LOW)                                                         // For pump pause delay timing
+ 271   3                                      {
+ 272   4                                              delay_ms(500);
+ 273   4                                              count ++;
+ 274   4                                      }
+ 275   3      
+ 276   3                                      if (_startswitch == HIGH)
+ 277   3                                      {
+ 278   4                                              _buzzer = ON;
+ 279   4                                              delay_ms(100);
+ 280   4                                              _buzzer = OFF;
+ 281   4                                              delay_ms(100);
+ 282   4                                              _buzzer = ON;
+ 283   4                                              delay_ms(100);
+ 284   4                                              _buzzer = OFF;
+ 285   4                                              status_startpump();
+ 286   4                                      }
+ 287   3      
+ 288   3                                      if (_stopswitch == HIGH)
+ 289   3                                      {
+ 290   4                                              _buzzer = ON;
+ 291   4                                              delay_ms(250);
+ 292   4                                              _buzzer = OFF;
+ 293   4                                              status_stoppump();
+ 294   4                                      }
+ 295   3      
+ 296   3      
+ 297   3                                      if (count > _pumppausedelay && _flowsensor == LOW && _pumponflag == LOW)
+ 298   3                                      {
+ 299   4                                              _buzzer = ON;
+C51 COMPILER V8.18   WPC                                                                   12/22/2016 21:24:29 PAGE 6   
+
+ 300   4                                              delay_sec(1);
+ 301   4                                              _buzzer = OFF;
+ 302   4                                              status_pausepump();
+ 303   4                                      }
+ 304   3      
+ 305   3                                      if (_highsensor == HIGH && _highsenseflag == HIGH)
+ 306   3                                      {
+ 307   4                                              _buzzer = ON;
+ 308   4                                              delay_ms(500);
+ 309   4                                              _buzzer = OFF;
+ 310   4                                              _highsenseflag = LOW;
+ 311   4                                              delay_sec(5);
+ 312   4                                              status_stoppump();
+ 313   4                                      }
+ 314   3      
+ 315   3                                      if (_lowsensor == LOW && _lowbuzzflag == HIGH)
+ 316   3                                      {
+ 317   4                                      _buzzer = ON;
+ 318   4                                      delay_ms(250);
+ 319   4                                      _buzzer = OFF;
+ 320   4                                      delay_sec(1);
+ 321   4                                      }
+ 322   3                              }
+ 323   2              
+ 324   2      
+ 325   2                              while (_asswitch == HIGH)                                                               // Auto-start is enabled
+ 326   2                              {       
+ 327   3                                      status_autoidle(); 
+ 328   3      
+ 329   3                                      if (_pumponflag == LOW)                                                         // For pump pause delay timing
+ 330   3                                      {
+ 331   4                                              delay_ms(500);
+ 332   4                                              count ++;
+ 333   4                                      }
+ 334   3                                                      
+ 335   3                                      if (_highsensor != HIGH && _autoflag == HIGH)
+ 336   3                                              {
+ 337   4                                                      status_startpump();
+ 338   4                                                      _autoflag = LOW;
+ 339   4                                              }
+ 340   3      
+ 341   3                      
+ 342   3                                      if (_lowsensor != HIGH)
+ 343   3                                              {
+ 344   4                                                      _autoflag = HIGH;
+ 345   4                                              }
+ 346   3      
+ 347   3      
+ 348   3                                      if (_startswitch == HIGH)
+ 349   3                                              {
+ 350   4                                                      _buzzer = ON;
+ 351   4                                                      delay_ms(100);
+ 352   4                                                      _buzzer = OFF;
+ 353   4                                                      delay_ms(100);
+ 354   4                                                      _buzzer = ON;
+ 355   4                                                      delay_ms(100);
+ 356   4                                                      _buzzer = OFF;
+ 357   4                                                      status_startpump();
+ 358   4                                              }
+ 359   3      
+ 360   3                                              if (_stopswitch == HIGH)
+ 361   3                                              {
+C51 COMPILER V8.18   WPC                                                                   12/22/2016 21:24:29 PAGE 7   
+
+ 362   4                                                      _buzzer = ON;
+ 363   4                                                      delay_ms(250);
+ 364   4                                                      _buzzer = OFF;
+ 365   4                                                      status_stoppump();
+ 366   4                                              }
+ 367   3                                      
+ 368   3                                              if (count > _pumppausedelay && _flowsensor == LOW && _pumponflag == LOW)
+ 369   3                                              {
+ 370   4                                                      _buzzer = ON;
+ 371   4                                                      delay_sec(1);
+ 372   4                                                      _buzzer = OFF;
+ 373   4                                                      status_pausepump(); 
+ 374   4                                              }
+ 375   3      
+ 376   3                                              if (_highsensor == HIGH && _highsenseflag == HIGH)
+ 377   3                                      {
+ 378   4                                              
+ 379   4                                              _buzzer = ON;
+ 380   4                                              delay_ms(500);
+ 381   4                                              _buzzer = OFF;
+ 382   4                                              _highsenseflag = LOW;
+ 383   4                                              delay_sec(5);
+ 384   4                                              status_stoppump();
+ 385   4                                      }
+ 386   3                              }                               
+ 387   2              }
+ 388   1      }  
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =   1077    ----
+   CONSTANT SIZE    =    286    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =     24    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)
